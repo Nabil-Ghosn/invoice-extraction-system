@@ -1,0 +1,68 @@
+{
+  "file_path": "tests\\data\\salesinvoice2.pdf",
+  "processing_timestamp": "2026-01-03T18:48:32.602697",
+  "parsing_result": {
+    "filename": "salesinvoice2.pdf",
+    "content_length": 1210,
+    "num_pages": 1,
+    "success": true,
+    "error_message": null,
+    "metadata": {},
+    "content": "```markdown\n# Master Blaster's Massive Entity\n101 Thunderdome Road\nBartertown, NY 12345\n(212) 555-1234\ninfo@masterblaster.com\n\n## INVOICE\n**Invoice #0043**                      **Date Issued:**           May 15, 2022\n**Bill to:** Imperator Furiosa\n202 Fury Road\nGreenplace, NY 10101\n(212) 555-4321\nfuriosa@citadel.net\n\n| SKU   | Item Description              | Quantity | Unit price | Price   |\n|-------|-------------------------------|----------|------------|---------|\n| 0015  | Black greasepaint - 3 oz.     | 10       | $20.00     | $200.00 |\n| 0080  | Protective goggles            | 2        | $25.00     | $50.00  |\n| 0250  | Stainless Steel Canteen       | 2        | $37.50     | $75.00  |\n| 7846  | Steering Wheel - Skull        | 1        | $500.00    | $500.00 |\n\n|                                   |            | |\n|-----------------------------------|------------|---|\n|                                   | **Net**    | $825.00    |\n|                                   | **Tax (10%)** | $82.50   |\n|                                   | **Total**  | $907.50    |\n\nPayment accepted via check or credit card within 30 days. Late invoices are subject to a 10% fee.\n**Payment Due:** June 15, 2022\n```"
+  },
+  "extraction_result": {
+    "metadata": {
+      "invoice_number": "0043",
+      "invoice_date": "2022-05-15",
+      "sender_name": "Master Blaster's Massive Entity",
+      "receiver_name": "Imperator Furiosa",
+      "currency": "USD",
+      "total_amount": "907.50"
+    },
+    "line_items_count": 4,
+    "line_items": [
+      {
+        "item_code": "0015",
+        "description": "Black greasepaint - 3 oz.",
+        "delivery_date": null,
+        "quantity_value": 10.0,
+        "quantity_unit": null,
+        "unit_price": 20.0,
+        "line_total_amount": 200.0,
+        "section": "General"
+      },
+      {
+        "item_code": "0080",
+        "description": "Protective goggles",
+        "delivery_date": null,
+        "quantity_value": 2.0,
+        "quantity_unit": null,
+        "unit_price": 25.0,
+        "line_total_amount": 50.0,
+        "section": "General"
+      },
+      {
+        "item_code": "0250",
+        "description": "Stainless Steel Canteen",
+        "delivery_date": null,
+        "quantity_value": 2.0,
+        "quantity_unit": null,
+        "unit_price": 37.5,
+        "line_total_amount": 75.0,
+        "section": "General"
+      },
+      {
+        "item_code": "7846",
+        "description": "Steering Wheel - Skull",
+        "delivery_date": null,
+        "quantity_value": 1.0,
+        "quantity_unit": null,
+        "unit_price": 500.0,
+        "line_total_amount": 500.0,
+        "section": "General"
+      }
+    ],
+    "pages_processed": 1,
+    "processing_type": "single_shot"
+  }
+}
