@@ -1,0 +1,50 @@
+# Ingestion Service Sequence Diagram
+
+sequenceDiagram
+    autonumber
+    participant Client
+    participant IS as IngestionService
+    participant Repo as CommandInvoiceRepository
+    participant Parser as InvoiceParser
+    participant Extractor as InvoiceExtractor
+    participant Embed as GeminiEmbedder
+    
+    Client->>IS: ingest_invoice(file_path)
+    
+    %% 1. Deduplication Check
+    IS->>IS: calculate_file_hash(file_path)
+    IS->>Repo: get_by_hash(file_hash)
+    alt Hash exists
+        Repo-->>IS: existing_invoice
+        IS-->>Client: return existing_invoice.id (SKIP)
+    end
+
+    %% 2. Parsing
+    IS->>Parser: parse_invoice(file_path)
+    Parser-->>IS: ParsingResult (pages, content)
+
+    %% 3. Extraction (The heavy lifting from Step 2)
+    IS->>Extractor: extract(parsing_result.pages)
+    note right of Extractor: Handles Single vs Multi-page logic internally
+    Extractor-->>IS: FinalInvoice (Pydantic)
+
+    %% 4. Data Transformation & Embedding
+    loop For each extracted LineItem
+        IS->>IS: Create search_text (Vendor + Section + Desc)
+        IS->>Embed: embed_text(search_text)
+        Embed-->>IS: vector [0.02, 0.51, ...]
+        IS->>IS: Create LineItemModel (with vector & metadata)
+    end
+
+    %% 5. Storage - Save Invoice First
+    IS->>Repo: save_invoice(invoice_model)
+    Repo-->>IS: saved_invoice (with ID)
+
+    %% 6. Storage - Update Line Items with Invoice ID and Save
+    loop For each LineItemModel
+        IS->>IS: Set invoice_id = saved_invoice.id
+    end
+    IS->>Repo: save_line_items(line_item_models)
+    Repo-->>IS: success
+
+    IS-->>Client: success_message

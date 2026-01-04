@@ -11,9 +11,8 @@ import sys
 # Add the project root to the path so we can import from main
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from main import process_invoice_file
-from src.invoice_parser import ParsingResult
-from src.invoice_extractor import FinalInvoice
+from src.invoice_parser import InvoiceParser, ParsingResult
+from src.invoice_extractor import FinalInvoice, InvoiceExtractor
 
 
 async def format_and_save_results(
@@ -44,8 +43,10 @@ async def format_and_save_results(
         "metadata": extraction_result.metadata.model_dump()
         if extraction_result.metadata
         else {},
-        "line_items_count": len(extraction_result.line_items),
-        "line_items": [item.model_dump() for item in extraction_result.line_items],
+        "line_items_count": len(
+            [item for page in extraction_result.pages for item in page.line_items]
+        ),
+        "pages": [page.model_dump() for page in extraction_result.pages],
         "pages_processed": extraction_result.pages_processed,
         "processing_type": extraction_result.processing_type,
     }
@@ -97,11 +98,18 @@ async def main() -> None:
         print(f"\nProcessing: {file_path}")
 
         try:
-            parsing_result, extraction_result = await process_invoice_file(file_path)
+            parser: InvoiceParser = InvoiceParser(env="test")
+            extractor: InvoiceExtractor = InvoiceExtractor(env="test")
 
+            parsing_result: ParsingResult = await parser.parse_invoice(file_path)
+            extraction_result: FinalInvoice = await extractor.extract(
+                pages=parsing_result.pages
+            )
             print(f"  Parsing successful: {parsing_result.success}")
             print(f"  Pages processed: {len(parsing_result.pages)}")
-            print(f"  Line items extracted: {len(extraction_result.line_items)}")
+            print(
+                f"  Line items extracted: {len([item for page in extraction_result.pages for item in page.line_items])}"
+            )
 
             # Format and save results
             await format_and_save_results(file_path, parsing_result, extraction_result)

@@ -23,9 +23,15 @@ from .prompts import MULTI_PAGE_PROMPT_TEMPLATE, SINGLE_PAGE_PROMPT_TEMPLATE
 logger: logging.Logger = logging.getLogger(__name__)
 
 
+class ExtractedPage(BaseModel):
+    """Represents a single page of an invoice with its extracted line items."""
+    page_number: int
+    line_items: list[LineItem]
+
+
 class FinalInvoice(BaseModel):
     metadata: InvoiceContext
-    line_items: list[LineItem]
+    pages: list[ExtractedPage]  # Changed from flat list to page-level breakdown
     pages_processed: int
     processing_type: str  # "single_shot" or "sequential_chain"
 
@@ -91,9 +97,15 @@ class InvoiceExtractor:
 
             context: InvoiceContext = result.invoice_context
 
+            # Create a single page with its line items
+            extracted_page = ExtractedPage(
+                page_number=1,
+                line_items=result.line_items
+            )
+
             return FinalInvoice(
                 metadata=context,
-                line_items=result.line_items,
+                pages=[extracted_page],
                 pages_processed=1,
                 processing_type="single_shot",
             )
@@ -107,7 +119,7 @@ class InvoiceExtractor:
         """
         logger.info(f"Detected {len(pages)} pages. Using Sequential Chain strategy.")
 
-        all_line_items: list[LineItem] = []
+        extracted_pages: list[ExtractedPage] = []
         aggregated_context = InvoiceContext()  # type: ignore
 
         # Initial State: "Start"
@@ -130,9 +142,12 @@ class InvoiceExtractor:
                     page_text=clean_text,
                 )
 
-                # Accumulate
-                if result.line_items:
-                    all_line_items.extend(result.line_items)
+                # Create extracted page with its line items
+                extracted_page = ExtractedPage(
+                    page_number=page_num,
+                    line_items=result.line_items
+                )
+                extracted_pages.append(extracted_page)
 
                 # Merge Context (Update nulls with new values)
                 if result.invoice_context:
@@ -149,7 +164,7 @@ class InvoiceExtractor:
 
         return FinalInvoice(
             metadata=aggregated_context,
-            line_items=all_line_items,
+            pages=extracted_pages,
             pages_processed=len(pages),
             processing_type="sequential_chain",
         )

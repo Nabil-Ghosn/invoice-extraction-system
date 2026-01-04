@@ -1,0 +1,27 @@
+# Query Analyzer
+
+flowchart TD
+    User[User Query] --> Router{Query Analyzer LLM}
+
+    subgraph "Phase 1: Understanding"
+        Router -->|Extracts| Filters[Structured Filters Page, Date, Vendor]
+        Router -->|Extracts| Intent[Semantic Intent 'Maintenance', 'Labor']
+    end
+    
+    subgraph "Phase 2: Retrieval Strategy"
+        Filters & Intent --> Decision{Decision Logic}
+        Decision -->|Intent is Empty?| DB_Filter[Strict DB Query find]
+        Decision -->|Intent Present?| DB_Vector[Vector Search $vectorSearch + filter]
+    end
+    
+    subgraph "Phase 3: Execution"
+        DB_Filter & DB_Vector --> MongoDB[(MongoDB Atlas)]
+        MongoDB --> Results[Retrieved Line Items]
+    end
+    
+    subgraph "Phase 4: Synthesis"
+        Results --> Context[Context Window]
+        User --> Context
+        Context --> Synthesizer[Answer Generator LLM]
+        Synthesizer --> Answer[Final Grounded Answer]
+    end

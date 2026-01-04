@@ -1,0 +1,23 @@
+# Ingestion Service Activity Diagram
+
+flowchart TD
+    Start([Start Ingestion]) --> Hash{Check File Hash}
+    
+    Hash -- "Hash Exists in DB" --> Skip([Skip: Return Cached ID])
+    Hash -- "New File" --> Parse[InvoiceParser: LlamaParse]
+    
+    Parse --> Extract[InvoiceExtractor: LLM Extraction Chain]
+    
+    Extract -- "Returns FinalInvoice" --> Transform[Data Transformation]
+    
+    subgraph Transformation Logic
+        Transform --> Head[Create InvoiceModel Header]
+        Transform --> Rows[Flatten LineItems]
+        Rows --> Enrich[Enrich LineItems with Metadata\nInvoiceID, PageNum, Vendor]
+    end
+    
+    Enrich --> Embed[Embedder: Generate Vectors for LineItems]
+    
+    Embed --> Save[Repository: Transactional Save]
+    
+    Save --> End([End Ingestion])

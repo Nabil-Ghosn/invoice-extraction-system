@@ -1,0 +1,44 @@
+# Invoice Extractor Activity Diagram
+
+stateDiagram
+    direction TB
+    
+    [*] --> CheckCount: Input Documents
+
+    %% Simplified Single Page Path
+    state "Single-Shot Strategy" as Single {
+        [*] --> ProcessSingle: Extract Full Invoice
+        ProcessSingle --> [*]
+    }
+
+    %% Detailed Multi-Page Path
+    state "Sequential Chain Strategy" as Multi {
+        [*] --> Init: Init Accumulators & State="Start"
+        
+        Init --> Loop: Begin Iteration
+        
+        state "Rolling Context Loop" as Loop {
+            direction TB
+            
+            PrepareInput: 1. Inject Previous State (JSON)
+            Extract: 2. LLM Extraction (Page N)
+            Merge: 3. Merge Metadata & Append Lines
+            NextState: 4. Update State (for Page N+1)
+
+            [*] --> PrepareInput
+            PrepareInput --> Extract
+            Extract --> Merge
+            Merge --> NextState
+            
+            %% The recursive arrow
+            NextState --> PrepareInput: Iterate to Next Page
+        }
+    }
+
+    CheckCount --> Single: 1 Page
+    CheckCount --> Multi: 2+ Pages
+
+    Single --> Finalize: Return Result
+    Multi --> Finalize
+    
+    Finalize --> [*]

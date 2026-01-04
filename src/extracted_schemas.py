@@ -13,9 +13,7 @@ class LineItem(BaseModel):
     delivery_date: str | None = Field(None, description="ISO 8601 or near-ISO")
 
     # quantity_raw: str | None = Field(None, description="Raw OCR quantity")
-    quantity_value: float | None = Field(
-        None, description="Normalized numeric quantity"
-    )
+    quantity: float | None = Field(None, description="Normalized numeric quantity")
     quantity_unit: str | None = Field(
         None, description="Unit e.g. 'kg', 'hours' if present"
     )
@@ -43,9 +41,7 @@ class InvoiceContext(BaseModel):
     currency: str | None = Field(
         None, description="ISO 4217 currency code inferred from symbols or labels"
     )
-    total_amount: str | None = Field(
-        None, description="Raw total (could include commas/symbols)"
-    )
+    total_amount: float | None = Field(None)
 
 
 class PageState(BaseModel):

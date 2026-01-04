@@ -1,0 +1,42 @@
+# Invoice Extractor Sequence Diagram
+
+sequenceDiagram
+    autonumber
+    participant Client
+    participant IE as InvoiceExtractor
+    participant LLM as LLMTextCompletionProgram
+    participant Utils as Internal Utils (_merge/_clean)
+
+    Client->>IE: extract(pages)
+    
+    alt pages length == 1
+        IE->>Utils: _clean_text(page.text)
+        Utils-->>IE: clean_text
+        IE->>LLM: single_page_program.acall(clean_text)
+        LLM-->>IE: InvoiceSinglePage
+        IE-->>Client: FinalInvoice (single_shot)
+
+    else pages length > 1
+        IE->>IE: Initialize aggregated_context & current_state
+        
+        loop for each page
+            IE->>Utils: _clean_text(page.text)
+            Utils-->>IE: clean_text
+            
+            IE->>LLM: multi_page_program.acall(page_num, state_json, clean_text)
+            
+            alt Success
+                LLM-->>IE: InvoicePage
+                IE->>IE: all_line_items.extend(result.line_items)
+                IE->>Utils: _merge_context(aggregated_context, result.context)
+                IE->>IE: Update current_state
+            else Exception
+                IE->>IE: Log error & Continue loop
+            end
+        end
+        
+        IE-->>Client: FinalInvoice (sequential_chain)
+    
+    else pages length == 0
+        IE-->>Client: raise ValueError
+    end
