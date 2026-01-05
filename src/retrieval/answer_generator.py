@@ -4,18 +4,7 @@ from wireup import Inject, service
 from google.genai import Client
 from google.genai.types import GenerateContentConfig
 from llama_index.core.prompts.base import PromptTemplate
-from src.core.models import LineItemModel
 from src.core.prompts import ANSWER_GENERATION_PROMPT
-
-
-def format_context(items: list[LineItemModel]) -> str:
-    context_str = "Found Line Items:\n"
-    for item in items:
-        context_str += (
-            f"- Item: {item.description} | Cost: {item.total_amount} | "
-            f"Date: {item.delivery_date} | [Inv: {item.invoice_id}, Page: {item.page_number}]\n"
-        )
-    return context_str
 
 
 @service
@@ -29,9 +18,8 @@ class AnswerGenerator:
     def generate_answer(
         self,
         user_query: str,
-        items: list[LineItemModel],
+        context: str,
     ) -> str:
-        context: str = format_context(items)
         response: GenerateContentResponse = self._client.models.generate_content(
             model=self.MODEL_NAME,
             contents=user_query,

@@ -3,10 +3,12 @@ from datetime import datetime
 from typing import Any
 
 from beanie import Document, PydanticObjectId
+from wireup import service
 from src.retrieval.tools import SearchLineItemsTool, SearchInvoicesTool
 from src.core.models import InvoiceModel
 
 
+@service
 class QueryTranslator:
     async def generate_line_item_pipeline(
         self, criteria: SearchLineItemsTool, embedding: list[float] | None

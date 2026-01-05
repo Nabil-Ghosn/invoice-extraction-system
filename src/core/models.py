@@ -1,7 +1,7 @@
 from datetime import datetime, date, timezone
 from enum import Enum
 from typing import Annotated
-from pydantic import Field
+from pydantic import BaseModel, Field
 from beanie import Document, Indexed, PydanticObjectId
 from pymongo import DESCENDING
 
@@ -9,12 +9,6 @@ from pymongo import DESCENDING
 class ProcessingStatus(str, Enum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
-    # For scaling project.
-    # Web API with concurrent users and background workers (Celery/Redis),
-    # the "Pre-Create" pattern is mandatory for locking and progress bars.
-    # PENDING = "PENDING"
-    # EXTRACTING = "EXTRACTING"
-    # INDEXING = "INDEXING"
 
 
 class InvoiceModel(Document):
@@ -70,3 +64,37 @@ class LineItemModel(Document):
         name: str = "line_items"
 
     # Having the vector search set with Atlas UI for vector with pre-filter (page_number, total_amount, delivery_date).
+
+
+class LineItemProjection(BaseModel):
+    invoice_id: PydanticObjectId
+    page_number: int
+
+    description: str
+    section: str
+
+    quantity: float | None
+    quantity_unit: str | None
+    unit_price: float | None
+    total_amount: float | None
+
+    item_code: str | None
+    delivery_date: str | None
+
+
+class InvoiceProjection(BaseModel):
+    filename: str
+    file_hash: str
+    upload_date: datetime
+
+    status: ProcessingStatus
+    error_message: str | None
+    total_pages: int
+    processing_time_seconds: float
+
+    invoice_number: str | None
+    invoice_date: date | None
+    sender_name: str | None
+    receiver_name: str | None
+    currency: str
+    total_amount: float | None

@@ -2,7 +2,7 @@ from typing import Protocol
 from datetime import date
 from dataclasses import dataclass
 
-from wireup import service
+from wireup import abstract, service
 
 from src.core.models import InvoiceModel, LineItemModel
 
@@ -29,6 +29,7 @@ class SearchResult:
     similarity_score: float  # Cosine similarity or distance score
 
 
+@abstract
 class IQueryInvoiceRepository(Protocol):
     """Interface for querying invoices with vector search capabilities."""
 
@@ -64,6 +65,9 @@ class IQueryInvoiceRepository(Protocol):
 
 @service
 class BeanieQueryInvoiceRepository(IQueryInvoiceRepository):
+    def __init__(self) -> None:
+        pass
+
     async def vector_search(
         self,
         query_embedding: list[float],
@@ -92,16 +96,27 @@ class BeanieQueryInvoiceRepository(IQueryInvoiceRepository):
             if filters.delivery_date_from or filters.delivery_date_to:
                 match_stage["$match"]["delivery_date"] = {}
                 if filters.delivery_date_from:
-                    match_stage["$match"]["delivery_date"]["$gte"] = filters.delivery_date_from.isoformat()
+                    match_stage["$match"]["delivery_date"]["$gte"] = (
+                        filters.delivery_date_from.isoformat()
+                    )
                 if filters.delivery_date_to:
-                    match_stage["$match"]["delivery_date"]["$lte"] = filters.delivery_date_to.isoformat()
+                    match_stage["$match"]["delivery_date"]["$lte"] = (
+                        filters.delivery_date_to.isoformat()
+                    )
 
-            if filters.total_amount_min is not None or filters.total_amount_max is not None:
+            if (
+                filters.total_amount_min is not None
+                or filters.total_amount_max is not None
+            ):
                 match_stage["$match"]["total_amount"] = {}
                 if filters.total_amount_min is not None:
-                    match_stage["$match"]["total_amount"]["$gte"] = filters.total_amount_min
+                    match_stage["$match"]["total_amount"]["$gte"] = (
+                        filters.total_amount_min
+                    )
                 if filters.total_amount_max is not None:
-                    match_stage["$match"]["total_amount"]["$lte"] = filters.total_amount_max
+                    match_stage["$match"]["total_amount"]["$lte"] = (
+                        filters.total_amount_max
+                    )
 
             if filters.page_number is not None:
                 match_stage["$match"]["page_number"] = filters.page_number
@@ -131,31 +146,33 @@ class BeanieQueryInvoiceRepository(IQueryInvoiceRepository):
         pipeline.insert(0, vector_search_stage)
 
         # Add lookup to join with invoices
-        pipeline.append({
-            "$lookup": {
-                "from": "invoices",
-                "localField": "invoice_id",
-                "foreignField": "_id",
-                "as": "invoice"
+        pipeline.append(
+            {
+                "$lookup": {
+                    "from": "invoices",
+                    "localField": "invoice_id",
+                    "foreignField": "_id",
+                    "as": "invoice",
+                }
             }
-        })
+        )
 
         # Add project stage to format results
-        pipeline.append({
-            "$project": {
-                "line_item": "$$ROOT",
-                "invoice": {"$arrayElemAt": ["$invoice", 0]},
-                "similarity_score": {"$meta": "vectorSearchScore"}
+        pipeline.append(
+            {
+                "$project": {
+                    "line_item": "$$ROOT",
+                    "invoice": {"$arrayElemAt": ["$invoice", 0]},
+                    "similarity_score": {"$meta": "vectorSearchScore"},
+                }
             }
-        })
+        )
 
         # Add match stage to filter by similarity score
         if min_similarity_score > 0:
-            pipeline.append({
-                "$match": {
-                    "similarity_score": {"$gte": min_similarity_score}
-                }
-            })
+            pipeline.append(
+                {"$match": {"similarity_score": {"$gte": min_similarity_score}}}
+            )
 
         # Execute the pipeline
         results = await LineItemModel.aggregate(pipeline).to_list(length=None)
@@ -191,7 +208,9 @@ class BeanieQueryInvoiceRepository(IQueryInvoiceRepository):
                 status=invoice_data.get("status"),
                 error_message=invoice_data.get("error_message"),
                 total_pages=invoice_data.get("total_pages", 0),
-                processing_time_seconds=invoice_data.get("processing_time_seconds", 0.0),
+                processing_time_seconds=invoice_data.get(
+                    "processing_time_seconds", 0.0
+                ),
                 invoice_number=invoice_data.get("invoice_number"),
                 invoice_date=invoice_data.get("invoice_date"),
                 sender_name=invoice_data.get("sender_name"),
@@ -201,9 +220,7 @@ class BeanieQueryInvoiceRepository(IQueryInvoiceRepository):
             )
 
             search_result = SearchResult(
-                line_item=line_item,
-                invoice=invoice,
-                similarity_score=similarity_score
+                line_item=line_item, invoice=invoice, similarity_score=similarity_score
             )
             search_results.append(search_result)
 
