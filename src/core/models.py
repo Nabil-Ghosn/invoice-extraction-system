@@ -62,11 +62,11 @@ class LineItemModel(Document):
     delivery_date: str | None = None  # ISO 8601 or near-ISO
     quantity_unit: str | None = None  # e.g. 'kg', 'hours' if present
 
-    # Constructed as: f"Vendor: {vendor}. Section: {section}. Item: {description}"
+    # Constructed as: f"Context: {sender_name} ({section}) | Item: {description} ({item_code})"
     search_text: str
     vector: list[float]
 
     class Settings:
         name: str = "line_items"
 
-    # Having the vector search set with Atlas UI for vector with pre-filter.
+    # Having the vector search set with Atlas UI for vector with pre-filter (page_number, total_amount, delivery_date).

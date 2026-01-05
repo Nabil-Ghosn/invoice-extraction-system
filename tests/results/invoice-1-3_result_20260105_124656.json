@@ -1,0 +1,145 @@
+{
+  "file_path": "tests/data/invoice-1-3.pdf",
+  "processing_timestamp": "2026-01-05T12:46:56.133124",
+  "parsing_result": {
+    "filename": "invoice-1-3.pdf",
+    "content": "```\n# Invoice\n\n**Date:** 16.12.2021\n**Invoice No.:** 1213\n\n**To**\nLa Galerie\n4 Rue Courtois\nLille, Nord, 59000\n\n**Ship To**\nSame as recipient\n\n**Instructions**\nNone\n\n| Product                     | Unit Price [EUR] | Total [EUR] |\n|-----------------------------|-------------------|--------------|\n| Glossostigma                | 9.90              | 29.70        |\n| Qty. 3                      |                   |              |\n| Bayberry                    | 5.44              | 1,207.68     |\n| Qty. 222                    |                   |              |\n| Waxflower                   | 1.67              | 56.78        |\n| Qty. 34                     |                   |              |\n| Carolina Geranium           | 4.17              | 187.65       |\n| Qty. 45                     |                   |              |\n| Smooth Solomon's Seal       | 4.97              | 14.91        |\n| Qty. 3                      |                   |              |\n| El Yunque Colorado          | 9.97              | 229.31       |\n| Qty. 23                     |                   |              |\n\n----\n\n**Zencorporations**\nTel: + 49 228 698629\nFax: + 49 228 698629\nThomas-Mann-Strasse 38\nBonn, 53111\nzencorporations.de\ncontact@zencorporations.de\n```\n\n\n\n```\n| Date       | Invoice No. | Item                  | Qty | Unit Price | Total   |\n|------------|-------------|-----------------------|-----|------------|---------|\n| 16.12.2021 | 1213        | Queen Anne's Lace     | 32  | 6.05       | 193.60  |\n|            |             | Alaskan Douglasia     | 122 | 4.36       | 531.92  |\n|            |             | Deer Sedge            | 23  | 3.82       | 87.86   |\n|            |             | Indian Tobacco        | 2   | 7.25       | 14.50   |\n|            |             |                       |     |            |         |\n|            |             | Subtotal              |     |            | 2553.91 |\n|            |             | Sales Tax             |     |            | 255.39  |\n|            |             | Total Due             |     |            | 2809.30 |\n|            |             |                       |     |            |         |\n|            |             | Due 30 days after receipt | |          |         |\n|            |             | Thank you for your business! | |       |         |\n```",
+    "metadata": {},
+    "success": true,
+    "error_message": null,
+    "pages": [
+      {
+        "text": "```\n# Invoice\n\n**Date:** 16.12.2021\n**Invoice No.:** 1213\n\n**To**\nLa Galerie\n4 Rue Courtois\nLille, Nord, 59000\n\n**Ship To**\nSame as recipient\n\n**Instructions**\nNone\n\n| Product                     | Unit Price [EUR] | Total [EUR] |\n|-----------------------------|-------------------|--------------|\n| Glossostigma                | 9.90              | 29.70        |\n| Qty. 3                      |                   |              |\n| Bayberry                    | 5.44              | 1,207.68     |\n| Qty. 222                    |                   |              |\n| Waxflower                   | 1.67              | 56.78        |\n| Qty. 34                     |                   |              |\n| Carolina Geranium           | 4.17              | 187.65       |\n| Qty. 45                     |                   |              |\n| Smooth Solomon's Seal       | 4.97              | 14.91        |\n| Qty. 3                      |                   |              |\n| El Yunque Colorado          | 9.97              | 229.31       |\n| Qty. 23                     |                   |              |\n\n----\n\n**Zencorporations**\nTel: + 49 228 698629\nFax: + 49 228 698629\nThomas-Mann-Strasse 38\nBonn, 53111\nzencorporations.de\ncontact@zencorporations.de\n```\n",
+        "metadata": {}
+      },
+      {
+        "text": "\n```\n| Date       | Invoice No. | Item                  | Qty | Unit Price | Total   |\n|------------|-------------|-----------------------|-----|------------|---------|\n| 16.12.2021 | 1213        | Queen Anne's Lace     | 32  | 6.05       | 193.60  |\n|            |             | Alaskan Douglasia     | 122 | 4.36       | 531.92  |\n|            |             | Deer Sedge            | 23  | 3.82       | 87.86   |\n|            |             | Indian Tobacco        | 2   | 7.25       | 14.50   |\n|            |             |                       |     |            |         |\n|            |             | Subtotal              |     |            | 2553.91 |\n|            |             | Sales Tax             |     |            | 255.39  |\n|            |             | Total Due             |     |            | 2809.30 |\n|            |             |                       |     |            |         |\n|            |             | Due 30 days after receipt | |          |         |\n|            |             | Thank you for your business! | |       |         |\n```",
+        "metadata": {}
+      }
+    ]
+  },
+  "extraction_result": {
+    "metadata": {
+      "invoice_number": "1213",
+      "invoice_date": "2021-12-16",
+      "sender_name": "Zencorporations",
+      "receiver_name": "La Galerie",
+      "currency": "EUR",
+      "total_amount": 2809.3
+    },
+    "pages": [
+      {
+        "page_number": 1,
+        "line_items": [
+          {
+            "item_code": null,
+            "description": "Glossostigma",
+            "delivery_date": null,
+            "quantity": 3.0,
+            "quantity_unit": null,
+            "unit_price": 9.9,
+            "line_total_amount": 29.7,
+            "section": "General"
+          },
+          {
+            "item_code": null,
+            "description": "Bayberry",
+            "delivery_date": null,
+            "quantity": 222.0,
+            "quantity_unit": null,
+            "unit_price": 5.44,
+            "line_total_amount": 1207.68,
+            "section": "General"
+          },
+          {
+            "item_code": null,
+            "description": "Waxflower",
+            "delivery_date": null,
+            "quantity": 34.0,
+            "quantity_unit": null,
+            "unit_price": 1.67,
+            "line_total_amount": 56.78,
+            "section": "General"
+          },
+          {
+            "item_code": null,
+            "description": "Carolina Geranium",
+            "delivery_date": null,
+            "quantity": 45.0,
+            "quantity_unit": null,
+            "unit_price": 4.17,
+            "line_total_amount": 187.65,
+            "section": "General"
+          },
+          {
+            "item_code": null,
+            "description": "Smooth Solomon's Seal",
+            "delivery_date": null,
+            "quantity": 3.0,
+            "quantity_unit": null,
+            "unit_price": 4.97,
+            "line_total_amount": 14.91,
+            "section": "General"
+          },
+          {
+            "item_code": null,
+            "description": "El Yunque Colorado",
+            "delivery_date": null,
+            "quantity": 23.0,
+            "quantity_unit": null,
+            "unit_price": 9.97,
+            "line_total_amount": 229.31,
+            "section": "General"
+          }
+        ]
+      },
+      {
+        "page_number": 2,
+        "line_items": [
+          {
+            "item_code": null,
+            "description": "Queen Anne's Lace",
+            "delivery_date": "2021-12-16",
+            "quantity": 32.0,
+            "quantity_unit": null,
+            "unit_price": 6.05,
+            "line_total_amount": 193.6,
+            "section": "General"
+          },
+          {
+            "item_code": null,
+            "description": "Alaskan Douglasia",
+            "delivery_date": null,
+            "quantity": 122.0,
+            "quantity_unit": null,
+            "unit_price": 4.36,
+            "line_total_amount": 531.92,
+            "section": "General"
+          },
+          {
+            "item_code": null,
+            "description": "Deer Sedge",
+            "delivery_date": null,
+            "quantity": 23.0,
+            "quantity_unit": null,
+            "unit_price": 3.82,
+            "line_total_amount": 87.86,
+            "section": "General"
+          },
+          {
+            "item_code": null,
+            "description": "Indian Tobacco",
+            "delivery_date": null,
+            "quantity": 2.0,
+            "quantity_unit": null,
+            "unit_price": 7.25,
+            "line_total_amount": 14.5,
+            "section": "General"
+          }
+        ]
+      }
+    ],
+    "pages_processed": 2,
+    "processing_type": "sequential_chain"
+  }
+}

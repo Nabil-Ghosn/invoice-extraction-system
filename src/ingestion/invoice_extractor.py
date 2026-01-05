@@ -18,13 +18,14 @@ from .extracted_schemas import (
     InvoiceContext,
     LineItem,
 )
-from .prompts import MULTI_PAGE_PROMPT_TEMPLATE, SINGLE_PAGE_PROMPT_TEMPLATE
+from src.core.prompts import MULTI_PAGE_PROMPT_TEMPLATE, SINGLE_PAGE_PROMPT_TEMPLATE
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
 class ExtractedPage(BaseModel):
     """Represents a single page of an invoice with its extracted line items."""
+
     page_number: int
     line_items: list[LineItem]
 
@@ -98,10 +99,7 @@ class InvoiceExtractor:
             context: InvoiceContext = result.invoice_context
 
             # Create a single page with its line items
-            extracted_page = ExtractedPage(
-                page_number=1,
-                line_items=result.line_items
-            )
+            extracted_page = ExtractedPage(page_number=1, line_items=result.line_items)
 
             return FinalInvoice(
                 metadata=context,
@@ -144,8 +142,7 @@ class InvoiceExtractor:
 
                 # Create extracted page with its line items
                 extracted_page = ExtractedPage(
-                    page_number=page_num,
-                    line_items=result.line_items
+                    page_number=page_num, line_items=result.line_items
                 )
                 extracted_pages.append(extracted_page)
 

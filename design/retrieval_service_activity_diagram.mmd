@@ -1,0 +1,88 @@
+# Retrieval Service Activity Diagram
+
+flowchart TD
+    %% --- STYLING DEFINITIONS ---
+    classDef orchestrator fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#333;
+    classDef ai fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#333;
+    classDef logic fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#333;
+    classDef data fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,stroke-dasharray: 5 5,color:#333;
+    classDef decision fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:#333;
+
+    %% --- ENTRY POINT ---
+    Start([Client Request]):::orchestrator --> Input[/Input: user_query, is_llm_generated/]
+
+    %% --- 1. ORCHESTRATOR ---
+    subgraph Service [" ⚙️ Retrieval Service (Orchestrator) "]
+        direction TB
+        Input --> CallRouter[Call QueryRouter]:::orchestrator
+        CallTranslator[Call QueryTranslator]:::orchestrator
+        CallRepo[Call Repository]:::orchestrator
+        CheckFlag{Generate Answer?}:::decision
+        FormatRaw[Format JSON Response]:::orchestrator
+    end
+
+    %% --- 2. INTENT ---
+    subgraph Router [" 🧠 Query Router (LLM) "]
+        direction TB
+        DetectIntent[Analyze Intent / Function Call]:::ai
+        SelectTool{Select Tool}:::decision
+        ToolLine[Tool: SearchLineItems]:::ai
+        ToolInv[Tool: SearchInvoices]:::ai
+    end
+
+    %% --- 3. TRANSLATION ---
+    subgraph Translator [" 🔄 Query Translator "]
+        direction TB
+        MapArgs[Map Args -> Filters]:::logic
+        CheckSemantic{Contains Text?}:::decision
+        Embed[Generate Vector Embeddings]:::logic
+        BuildHybrid[Build: Vector Search + Match]:::logic
+        BuildMatch[Build: Match Only]:::logic
+    end
+
+    %% --- 4. DATA ---
+    subgraph Repo [" 🗄️ Infrastructure (IQueryInvoiceRepository) "]
+        direction TB
+        Mongo[("MongoDB Aggregation")]:::data
+    end
+
+    %% --- 5. SYNTHESIS (NEW COMPONENT) ---
+    subgraph AnswerGen [" 📝 Answer Generator "]
+        direction TB
+        Synthesize[Generate Grounded Answer]:::ai
+    end
+
+    %% --- FLOW CONNECTIONS ---
+    
+    %% Service -> Router
+    CallRouter --> DetectIntent
+    DetectIntent --> SelectTool
+    SelectTool --> |Line Items| ToolLine
+    SelectTool --> |Invoices| ToolInv
+    
+    %% Router -> Service -> Translator
+    ToolLine & ToolInv --> CallTranslator
+    CallTranslator --> MapArgs
+    MapArgs --> CheckSemantic
+    
+    %% Translation Logic
+    CheckSemantic -- Yes --> Embed --> BuildHybrid
+    CheckSemantic -- No --> BuildMatch
+    
+    %% Translator -> Service -> Repo
+    BuildHybrid & BuildMatch --> CallRepo
+    CallRepo --> Mongo
+    
+    %% Repo Results -> Service Decision
+    Mongo --> |"Results (Top-k)"| CheckFlag
+    
+    %% Decision Branching
+    CheckFlag -- No --> FormatRaw
+    CheckFlag -- Yes --> Synthesize
+    
+    %% Answer Generator Context Inputs
+    Input -.-> |"user_query"| Synthesize
+    
+    %% Outputs
+    Synthesize --> Output1([Return: Grounded Answer]):::orchestrator
+    FormatRaw --> Output2([Return: Structured Data]):::orchestrator

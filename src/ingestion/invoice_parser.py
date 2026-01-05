@@ -9,7 +9,7 @@ from llama_index.core.schema import Document
 
 from wireup import Inject, service
 
-from .prompts import PARSER_INVOICE_PROMPT
+from src.core.prompts import PARSER_INVOICE_PROMPT
 
 logger: logging.Logger = logging.getLogger(__name__)
 

@@ -243,3 +243,143 @@ To fix the "Context-Poor Embedding" problem (where "Server" could mean IT Hardwa
   * `filter` fields: `invoice_id`, `page_number`, `invoice_date`.
   * `vector` field: `vector` (768 dimensions).
   * `search` field: `sender_name`, `description` (for fuzzy keyword fallback).
+
+## Section 6: RAG & Answer Generation Strategy
+
+### 1. The Challenge: Ambiguity vs. Precision
+
+Users rarely ask pure vector or pure SQL questions. They ask **Hybrid Queries**:
+*"Show me maintenance costs (Semantic) on page 3 (Exact Filter)."*
+
+* **Vector Search** fails at exact filtering ("Page 3" isn't a semantic concept).
+* **Database Queries** fail at understanding intent ("Maintenance" isn't a column).
+* **Solution:** We need a system to translate Natural Language into a structured API payload *before* retrieval.
+
+### 2. Orchestration Strategies Evaluated
+
+#### Option A: Explicit Router (Classifier Pattern)
+
+* **Concept:** Classify intent using small LLM $\to$ Route to hard-coded logic branches.
+* **Verdict:** **Rejected.**
+* **Reason:** **Separation of Intent & Extraction.** A router identifies *what* the user wants (Intent) but does not automatically extract the *details* (Parameters).
+  * *The Bottleneck:* Handling hybrid queries requires maintaining a rigid web of `if/else` logic for every parameter combination.
+
+#### Option B: ReAct Agent (Loop Pattern)
+
+* **Concept:** Allow LLM to "Think $\to$ Act $\to$ Observe" in a loop.
+* **Verdict:** **Rejected.**
+* **Reason:** **Latency & Indeterminism.** Open-ended loops increase the risk of hallucination and timeouts.
+
+#### Option C: Single-Step Function Calling (Selected)
+
+* **Concept:** The LLM selects the tool *and* extracts the arguments in a single inference step.
+* **Verdict:** **Selected.**
+
+### 3. Final Decision: LlamaIndex Function Calling Agent
+
+We utilize **Gemini 2.5 Flash** with **LlamaIndex** function calling.
+
+* **The Decider: Dynamic Schema Mapping.**
+    Function calling unifies **Intent Recognition** and **Parameter Extraction**.
+  * It eliminates the need to hard-code specific branches for "Date Search" vs "Page Search" vs "Combined Search."
+* **Trade-off:** **Dependency.** Relies on the model's ability to adhere strictly to JSON schemas (Flash excels here; smaller models struggle).
+
+### 4. Tool Definition Strategy
+
+We restrict the Agent to two atomic tools to prevent hallucination:
+
+1. **`search_line_items(query: str, filters: InvoiceFilter)`**
+    * **Role:** The Workhorse.
+    * **Logic:** Executes the **Hybrid Scope Search** (Section 4). It performs vector search *inside* the mathematical bounds of the filters (Page, Date).
+2. **`get_invoice_metadata(invoice_id: str)`**
+    * **Role:** The Summarizer.
+    * **Logic:** Retrieves document-level totals and vendor details when granular line-item search is unnecessary.
+
+### 5. Grounding & Synthesis
+
+To ensure zero-hallucination responses:
+
+* **Negative Constraint:** System Prompt forbids general knowledge. *"If tool returns empty, state: 'No data found'."*
+* **Citation Injection:** Final answers must include citations derived from the tool output (e.g., `Found item X (Page 4)`).
+
+### 6. Answer Generation with Gemini (Top-K Retrieval)
+
+Once the top 'k' relevant results are retrieved based on the user query, they are passed as context to a final Gemini prompt. The LLM then synthesizes this information to generate a direct and accurate answer.
+
+## Section 7: Evaluation & Repo Structure
+
+### 1. Project Structure
+
+This structure enforces the **Modular Monolith** architecture, strictly separating the "Write Path" (Ingestion) from the "Read Path" (Retrieval) while sharing domain kernels.
+
+```text
+invoice-extraction-system/
+├── data/                       # Sample invoices (PDFs) and Golden Truth JSONs
+├── design/                     # Architecture diagrams (Mermaid/Images)
+├── src/
+│   ├── core/                   # SHARED KERNEL
+│   │   ├── config.py           # Env vars & Settings
+│   │   ├── database.py         # MongoDB/Beanie connection logic
+│   │   ├── models.py           # Domain Entities (Invoice, LineItem)
+│   │   └── services.py         # Shared Embedder Service
+│   │
+│   ├── ingestion/              # WRITE PATH (Heavy Compute)
+│   │   ├── parser.py           # LlamaParse Adapter
+│   │   ├── extractor.py        # LLM Chain (Stateful Extraction)
+|   |   ├── cmd_repository.py   # Write path Repository
+│   │   └── service.py          # Orchestrator
+│   │
+│   ├── retrieval/              # READ PATH (Low Latency)
+│   │   ├── router.py           # LLM Intent Classifier (Function Calling)
+│   │   ├── translator.py       # Query Builder (Tool -> Mongo Pipeline)
+│   │   ├── repository.py       # Database Execution Layer
+│   │   └── service.py          # RAG Orchestrator
+│   │
+│   └── main.py                 # CLI Entrypoint (Typer/Click)
+│
+├── tests/                      # Pytest Suite
+├── .env.example                # Config Template
+├── APPROACH.md                 # Design Decisions & Trade-offs (Crucial)
+├── docker-compose.yml          # MongoDB Atlas or Local Mongo container
+├── pyproject.toml              # Dependencies (Poetry)
+└── README.md                   # Setup & Usage Instructions
+```
+
+### 2. Evaluation Strategy (In Progress)
+
+Since we lack a massive labeled dataset, we evaluate using a **"Golden Set" Small-Scale Validation** approach.
+
+#### A. Extraction Evaluation (Accuracy)
+
+* **Method:** Create manual "Golden JSON" files for 3 diverse invoices (1 Simple, 1 Multi-page, 1 Complex).
+* **Metrics:**
+  * **Field-Level Precision:** `%` of fields (Date, Total Amount, Invoice ID) that exactly match the Golden JSON.
+  * **Table Row Count:** `ABS(Extracted_Rows - Actual_Rows)`. Detects missed line items.
+  * **Hallucination Check:** Verify if `Page Number` in extracted items actually exists in the PDF.
+
+#### B. Retrieval Evaluation (Recall)
+
+* **Method:** specialized unit tests (`tests/test_retrieval.py`) with pre-defined queries.
+* **Metrics:**
+  * **Hit Rate:** For the query *"Line items on page 3"*, do the returned database records strictly equal `page_number=3`?
+  * **Semantic Ranking:** For *"Labor costs"*, does the top result contain "Labor" or "Work" in the description?
+
+#### C. RAG Evaluation (Faithfulness)
+
+* **Method:** **LLM-as-a-Judge**.
+* **Process:**
+    1. Generate Answer $A$ based on Context $C$.
+    2. Ask a separate LLM instance: *"Does statement $A$ contain any facts not present in $C$?"*
+* **Metric:** Pass/Fail on Grounding.
+
+---
+
+### 3. Deliverable Checklist
+
+* [ ] **APPROACH.md:** Explains *why* MongoDB was chosen over SQL, and *why* LlamaParse was used over PyTesseract.
+* [ ] **Architecture Diagram:** The Mermaid flowchart in `design/architecture.md`.
+* [ ] **CLI:** `python main.py ingest --file invoice.pdf` and `python main.py ask "Total cost of labor?"`.
+* [*] **Docker:** `docker-compose up -d` spins up the DB.
+
+**This concludes the architectural design phase.**
+You are now ready to generate the code.
