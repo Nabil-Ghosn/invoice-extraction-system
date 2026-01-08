@@ -1,17 +1,16 @@
-from typing import Any
-
+import logging
 from wireup import service
 from src.core.services.embedder import IEmbedder
+from src.retrieval.query_invoice_repository import IQueryInvoiceRepository
 from src.retrieval.query_router import QueryRouter
-from src.retrieval.query_translator import QueryTranslator
 from src.retrieval.answer_generator import AnswerGenerator
 from src.retrieval.tools import SearchLineItemsTool, SearchInvoicesTool
 from src.core.models import (
     InvoiceProjection,
-    LineItemModel,
-    InvoiceModel,
     LineItemProjection,
 )
+
+logger = logging.Logger(__name__)
 
 
 @service
@@ -20,23 +19,22 @@ class RetrievalService:
     ⚙️ Retrieval Service (Orchestrator)
 
     Main service that orchestrates the retrieval workflow:
-    1. Calls QueryRouter to analyze intent
-    2. Calls QueryTranslator to map args to filters
-    3. Calls Repository to execute search
-    4. Decides whether to generate an answer or return structured data
+    1. Calls QueryRouter to analyze intent and get search filters
+    2. Calls Repository to build query pipelines from filters and execute search
+    3. Decides whether to generate an answer or return structured data
     """
 
     def __init__(
         self,
         query_router: QueryRouter,
-        query_translator: QueryTranslator,
         answer_generator: AnswerGenerator,
         embedder: IEmbedder,
+        repository: IQueryInvoiceRepository,
     ) -> None:
         self._query_router: QueryRouter = query_router
-        self._query_translator: QueryTranslator = query_translator
         self._answer_generator: AnswerGenerator = answer_generator
         self._embedder: IEmbedder = embedder
+        self._repository: IQueryInvoiceRepository = repository
 
     async def retrieve(
         self,
@@ -51,16 +49,20 @@ class RetrievalService:
         Returns:
             Either a generated answer string or structured data
         """
+        logger.info(f"Received query: {user_query}")
+
         # Step 1: Call QueryRouter to analyze intent and select tool
         criteria: str | SearchLineItemsTool | SearchInvoicesTool = (
             self._query_router.route(user_query)
         )
+        logger.info(f"Selected tool: {type(criteria)}.")
 
         # Step 2: Handle the routing result (either a tool or a text response)
         if isinstance(criteria, str):
             # If the router returned a text response instead of a tool, return it directly
             return criteria
 
+        logger.info(f"Tool data:\n{criteria.model_dump_json(indent=4)}")
         results: list[LineItemProjection] | list[InvoiceProjection]
         context: str
         # Step 3: Process the selected tool
@@ -69,30 +71,18 @@ class RetrievalService:
             if criteria.query_text:
                 embedding = self._embedder.embed_text(text=criteria.query_text)
 
-            # Generate the MongoDB pipeline using the QueryTranslator
-            pipeline = await self._query_translator.generate_line_item_pipeline(
-                criteria, embedding
-            )
-
-            # Execute the pipeline using beanie
-            results = await LineItemModel.aggregate(
-                pipeline, projection_model=LineItemProjection
-            ).to_list(length=None)
+            results = await self._repository.search_line_items(criteria, embedding)
             context = self._format_items_context(results)
         elif isinstance(criteria, SearchInvoicesTool):
-            # Generate the MongoDB pipeline using the QueryTranslator
-            pipeline: list[dict[str, Any]] = (
-                self._query_translator.generate_invoice_pipeline(criteria)
-            )
-
-            # Execute the pipeline using beanie
-            results = await InvoiceModel.aggregate(
-                pipeline, projection_model=InvoiceProjection
-            ).to_list(length=None)
+            results = await self._repository.search_invoices(criteria)
             context = self._format_invoices_context(results)
         else:
             raise ValueError(f"Unknown tool type returned by router: {type(criteria)}")
+
+        logger.info(f"Context:\n{context}")
         if is_llm_generated:
+            if not results:
+                return "I couldn't find any documents matching those specific criteria."
             # Generate a grounded answer using the AnswerGenerator
             answer: str = self._answer_generator.generate_answer(user_query, context)
             return answer
@@ -107,7 +97,8 @@ class RetrievalService:
                 f"- Item: {item.description} | "
                 + (f"Cost: {item.total_amount} | " if item.total_amount else "")
                 + (f"Date: {item.delivery_date} | " if item.delivery_date else "")
-                + f"[Inv: {str(item.invoice_id)}, Page: {item.page_number}]\n"
+                + (f"Inv#: {item.invoice_number} | " if item.invoice_number else "")
+                + f"[Page: {item.page_number}]\n"
             )
         return context_str
 

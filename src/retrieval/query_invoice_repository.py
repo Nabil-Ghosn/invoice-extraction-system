@@ -1,235 +1,341 @@
-from typing import Protocol
-from datetime import date
-from dataclasses import dataclass
+import logging
+import re
+from datetime import datetime, date
+from typing import Protocol, Any
 
+from beanie import PydanticObjectId
 from wireup import abstract, service
 
-from src.core.models import InvoiceModel, LineItemModel
-
-
-@dataclass
-class VectorSearchFilter:
-    """Filters for vector search pre-filtering."""
-
-    delivery_date_from: date | None = None
-    delivery_date_to: date | None = None
-    total_amount_min: float | None = None
-    total_amount_max: float | None = None
-    page_number: int | None = None
-    invoice_ids: list[str] | None = None
-    sender_names: list[str] | None = None
-
-
-@dataclass
-class SearchResult:
-    """Result of a vector search."""
-
-    line_item: LineItemModel
-    invoice: InvoiceModel
-    similarity_score: float  # Cosine similarity or distance score
+from src.retrieval.exceptions import DatabaseQueryError, InvalidDateFormatError
+from src.core.models import (
+    InvoiceModel,
+    LineItemModel,
+    InvoiceProjection,
+    LineItemProjection,
+    IdProjection,
+)
+from src.retrieval.tools import SearchLineItemsTool, SearchInvoicesTool
 
 
 @abstract
 class IQueryInvoiceRepository(Protocol):
-    """Interface for querying invoices with vector search capabilities."""
+    """
+    Interface for querying invoice data.
+    Input: Domain-level Search Criteria.
+    Output: Domain-level Projections.
+    """
 
-    async def vector_search(
+    async def search_line_items(
         self,
-        query_embedding: list[float],
-        top_k: int = 10,
-        filters: VectorSearchFilter | None = None,
-        min_similarity_score: float = 0.5,
-    ) -> list[SearchResult]:
+        criteria: SearchLineItemsTool,
+        embedding: list[float] | None,
+    ) -> list[LineItemProjection]:
         """
-        Perform vector similarity search with pre-filters.
-
-        Args:
-            query_embedding: The embedding vector to search for
-            top_k: Number of top results to return
-            filters: Pre-filters to apply before vector search
-            min_similarity_score: Minimum similarity score threshold
-
-        Returns:
-            List of SearchResults sorted by similarity score (highest first)
+        Executes a hybrid search (Vector + Metadata) for line items.
         """
         ...
 
-    async def get_invoice_by_id(self, invoice_id: str) -> InvoiceModel | None:
-        """Get an invoice by its ID."""
-        ...
-
-    async def get_line_item_by_id(self, line_item_id: str) -> LineItemModel | None:
-        """Get a line item by its ID."""
+    async def search_invoices(
+        self,
+        criteria: SearchInvoicesTool,
+    ) -> list[InvoiceProjection]:
+        """
+        Executes a structured metadata search for invoices.
+        """
         ...
 
 
 @service
 class BeanieQueryInvoiceRepository(IQueryInvoiceRepository):
+    """
+    MongoDB/Beanie implementation of the Repository.
+    Encapsulates all Aggregation Pipeline logic with proper error handling.
+    """
+
     def __init__(self) -> None:
         pass
 
-    async def vector_search(
+    # -------------------------------------------------------------------------
+    # Public API
+    # -------------------------------------------------------------------------
+
+    async def search_line_items(
         self,
-        query_embedding: list[float],
-        top_k: int = 10,
-        filters: VectorSearchFilter | None = None,
-        min_similarity_score: float = 0.5,
-    ) -> list[SearchResult]:
+        criteria: SearchLineItemsTool,
+        embedding: list[float] | None,
+    ) -> list[LineItemProjection]:
+        try:
+            # 1. Resolve Invoice Context (Pre-Filter Strategy)
+            invoice_ids_filter: (
+                list[PydanticObjectId] | None
+            ) = await self._resolve_invoice_ids(criteria)
+
+            # 2. Early exit if context filter matched nothing
+            if invoice_ids_filter is not None and len(invoice_ids_filter) == 0:
+                return []
+
+            # 3. Build and Execute Pipeline
+            pipeline: list[dict[str, Any]] = self._build_line_item_pipeline(
+                criteria, embedding, invoice_ids_filter
+            )
+            logging.info(f"Search Line Item MongoDB Query: {pipeline}")
+
+            results: list[LineItemProjection] = await LineItemModel.aggregate(
+                pipeline,
+                projection_model=LineItemProjection,
+            ).to_list(length=None)
+
+            return results
+
+        except InvalidDateFormatError as e:
+            raise e  # Bubble up validation errors
+        except Exception as e:
+            # Wrap DB internals in a domain exception
+            raise DatabaseQueryError(
+                f"Failed to execute line items search: {str(e)}"
+            ) from e
+
+    async def search_invoices(
+        self,
+        criteria: SearchInvoicesTool,
+    ) -> list[InvoiceProjection]:
+        try:
+            pipeline: list[dict[str, Any]] = self._build_invoice_pipeline(criteria)
+            logging.info(f"Search Invoice MongoDB Query: {pipeline}")
+
+            results: list[InvoiceProjection] = await InvoiceModel.aggregate(
+                pipeline,
+                projection_model=InvoiceProjection,
+            ).to_list(length=None)
+
+            return results
+
+        except InvalidDateFormatError:
+            raise
+        except Exception as e:
+            raise DatabaseQueryError(
+                f"Failed to execute invoice search: {str(e)}"
+            ) from e
+
+    # -------------------------------------------------------------------------
+    # Private Helpers - Context Resolution
+    # -------------------------------------------------------------------------
+
+    async def _resolve_invoice_ids(
+        self,
+        criteria: SearchLineItemsTool,
+    ) -> list[PydanticObjectId] | None:
         """
-        Perform vector similarity search with pre-filters.
-
-        Args:
-            query_embedding: The embedding vector to search for
-            top_k: Number of top results to return
-            filters: Pre-filters to apply before vector search
-            min_similarity_score: Minimum similarity score threshold
-
-        Returns:
-            List of SearchResults sorted by similarity score (highest first)
+        Helper to find Invoice ObjectIds based on metadata filters.
+        Returns None if no invoice-level filters are applied.
         """
-        # Build the MongoDB aggregation pipeline for vector search
-        pipeline = []
+        # We reuse the invoice filter builder, but map Tool fields to it
+        filters: dict[str, Any] = self._build_invoice_match_conditions(
+            invoice_number=criteria.invoice_number,
+            sender_name=criteria.sender_name,
+            date_start=criteria.invoice_date_start,
+            date_end=criteria.invoice_date_end,
+        )
 
-        # Apply pre-filters if provided
-        match_stage = {"$match": {}}
-        if filters:
-            if filters.delivery_date_from or filters.delivery_date_to:
-                match_stage["$match"]["delivery_date"] = {}
-                if filters.delivery_date_from:
-                    match_stage["$match"]["delivery_date"]["$gte"] = (
-                        filters.delivery_date_from.isoformat()
-                    )
-                if filters.delivery_date_to:
-                    match_stage["$match"]["delivery_date"]["$lte"] = (
-                        filters.delivery_date_to.isoformat()
-                    )
+        if not filters:
+            return None
 
-            if (
-                filters.total_amount_min is not None
-                or filters.total_amount_max is not None
-            ):
-                match_stage["$match"]["total_amount"] = {}
-                if filters.total_amount_min is not None:
-                    match_stage["$match"]["total_amount"]["$gte"] = (
-                        filters.total_amount_min
-                    )
-                if filters.total_amount_max is not None:
-                    match_stage["$match"]["total_amount"]["$lte"] = (
-                        filters.total_amount_max
-                    )
+        try:
+            # Optimization: Only fetch _id field
+            invoices: list[IdProjection] = (
+                await InvoiceModel.find(filters).project(IdProjection).to_list()
+            )
+            return [i.id for i in invoices if i.id]
+        except Exception as e:
+            raise DatabaseQueryError(f"Failed to resolve invoice context: {str(e)}")
 
-            if filters.page_number is not None:
-                match_stage["$match"]["page_number"] = filters.page_number
+    # -------------------------------------------------------------------------
+    # Private Helpers - Pipeline Construction
+    # -------------------------------------------------------------------------
 
-            if filters.sender_names:
-                # This requires a lookup to join with invoices collection
-                pass
+    def _build_line_item_pipeline(
+        self,
+        criteria: SearchLineItemsTool,
+        embedding: list[float] | None,
+        invoice_ids_filter: list[PydanticObjectId] | None,
+    ) -> list[dict[str, Any]]:
+        match_conditions: dict[str, Any] = self._build_line_item_match_conditions(
+            criteria, invoice_ids_filter
+        )
+        pipeline: list[dict[str, Any]] = []
 
-            if filters.invoice_ids:
-                match_stage["$match"]["invoice_id"] = {"$in": filters.invoice_ids}
+        if embedding and criteria.query_text:
+            # --- Path A: Semantic Vector Search ---
+            pipeline.append(
+                {
+                    "$vectorSearch": {
+                        "index": "vector_index",
+                        "path": "vector",
+                        "queryVector": embedding,
+                        # Dynamic candidates: wider net for better accuracy
+                        "numCandidates": max(100, criteria.limit * 10),
+                        "limit": criteria.limit,
+                        # CRITICAL: Filter applied INSIDE vector search
+                        "filter": match_conditions,
+                    }
+                }
+            )
+        else:
+            # --- Path B: Structured / Keyword Search ---
+            if match_conditions:
+                pipeline.append({"$match": match_conditions})
 
-        if match_stage["$match"]:  # Only add match stage if there are filters
-            pipeline.append(match_stage)
+            pipeline.append({"$sort": {"invoice_id": 1, "page_number": 1}})
+            pipeline.append({"$limit": criteria.limit})
 
-        # Add the vector search stage
-        vector_search_stage = {
-            "$vectorSearch": {
-                "index": "vector_index",
-                "path": "vector",
-                "queryVector": query_embedding,
-                "numCandidates": max(100, top_k * 10),
-                "limit": top_k,
-            }
-        }
-
-        # Insert vector search as the first stage
-        pipeline.insert(0, vector_search_stage)
-
-        # Add lookup to join with invoices
+        # Hydrate Results (Join with Invoices)
         pipeline.append(
             {
                 "$lookup": {
                     "from": "invoices",
                     "localField": "invoice_id",
                     "foreignField": "_id",
-                    "as": "invoice",
+                    "as": "invoice_info",
                 }
             }
         )
 
-        # Add project stage to format results
+        # Final Projection
         pipeline.append(
-            {
-                "$project": {
-                    "line_item": "$$ROOT",
-                    "invoice": {"$arrayElemAt": ["$invoice", 0]},
-                    "similarity_score": {"$meta": "vectorSearchScore"},
-                }
-            }
+            self._build_line_item_projection(use_vector_score=bool(embedding))
         )
 
-        # Add match stage to filter by similarity score
-        if min_similarity_score > 0:
-            pipeline.append(
-                {"$match": {"similarity_score": {"$gte": min_similarity_score}}}
-            )
+        return pipeline
 
-        # Execute the pipeline
-        results = await LineItemModel.aggregate(pipeline).to_list(length=None)
+    def _build_invoice_pipeline(
+        self, criteria: SearchInvoicesTool
+    ) -> list[dict[str, Any]]:
+        filters: dict[str, Any] = self._build_invoice_match_conditions(
+            invoice_number=criteria.invoice_number,
+            sender_name=criteria.sender_name,
+            filename_query=criteria.filename_query,
+            status=criteria.status,
+            date_start=criteria.start_date,
+            date_end=criteria.end_date,
+        )
 
-        # Convert to SearchResult objects
-        search_results = []
-        for result in results:
-            line_item_data = result["line_item"]
-            invoice_data = result["invoice"]
-            similarity_score = result["similarity_score"]
+        pipeline: list[dict[str, Any]] = []
+        if filters:
+            pipeline.append({"$match": filters})
 
-            # Create LineItemModel and InvoiceModel from the data
-            line_item = LineItemModel(
-                id=line_item_data.get("id"),
-                invoice_id=line_item_data.get("invoice_id"),
-                page_number=line_item_data.get("page_number", 0),
-                description=line_item_data.get("description", ""),
-                quantity=line_item_data.get("quantity"),
-                unit_price=line_item_data.get("unit_price"),
-                total_amount=line_item_data.get("total_amount"),
-                section=line_item_data.get("section", ""),
-                item_code=line_item_data.get("item_code"),
-                delivery_date=line_item_data.get("delivery_date"),
-                search_text=line_item_data.get("search_text", ""),
-                vector=line_item_data.get("vector", []),
-            )
+        pipeline.append({"$sort": {"invoice_date": -1}})
+        pipeline.append({"$limit": 50})
 
-            invoice = InvoiceModel(
-                id=invoice_data.get("id"),
-                filename=invoice_data.get("filename", ""),
-                file_hash=invoice_data.get("file_hash", ""),
-                upload_date=invoice_data.get("upload_date"),
-                status=invoice_data.get("status"),
-                error_message=invoice_data.get("error_message"),
-                total_pages=invoice_data.get("total_pages", 0),
-                processing_time_seconds=invoice_data.get(
-                    "processing_time_seconds", 0.0
-                ),
-                invoice_number=invoice_data.get("invoice_number"),
-                invoice_date=invoice_data.get("invoice_date"),
-                sender_name=invoice_data.get("sender_name"),
-                receiver_name=invoice_data.get("receiver_name"),
-                currency=invoice_data.get("currency", "USD"),
-                total_amount=invoice_data.get("total_amount"),
-            )
+        return pipeline
 
-            search_result = SearchResult(
-                line_item=line_item, invoice=invoice, similarity_score=similarity_score
-            )
-            search_results.append(search_result)
+    # -------------------------------------------------------------------------
+    # Private Helpers - Condition Builders
+    # -------------------------------------------------------------------------
 
-        return search_results
+    def _build_line_item_match_conditions(
+        self,
+        criteria: SearchLineItemsTool,
+        invoice_ids_filter: list[PydanticObjectId] | None,
+    ) -> dict[str, Any]:
+        match_conditions: dict[str, Any] = {}
 
-    async def get_invoice_by_id(self, invoice_id: str) -> InvoiceModel | None:
-        """Get an invoice by its ID."""
-        return await InvoiceModel.get(invoice_id)
+        # 1. Apply Resolved Invoice IDs
+        if invoice_ids_filter is not None:
+            match_conditions["invoice_id"] = {"$in": invoice_ids_filter}
 
-    async def get_line_item_by_id(self, line_item_id: str) -> LineItemModel | None:
-        """Get a line item by its ID."""
-        return await LineItemModel.get(line_item_id)
+        # 2. Page Filters
+        if criteria.page_number is not None:
+            match_conditions["page_number"] = criteria.page_number
+        elif criteria.min_page is not None or criteria.max_page is not None:
+            page_filter = {}
+            if criteria.min_page is not None:
+                page_filter["$gte"] = criteria.min_page
+            if criteria.max_page is not None:
+                page_filter["$lte"] = criteria.max_page
+            match_conditions["page_number"] = page_filter
+
+        # 3. Amount Filters
+        amount_filter = self._build_range_filter(
+            criteria.min_amount, criteria.max_amount
+        )
+        if amount_filter:
+            match_conditions["total_amount"] = amount_filter
+
+        return match_conditions
+
+    def _build_invoice_match_conditions(
+        self,
+        invoice_number: str | None = None,
+        sender_name: str | None = None,
+        filename_query: str | None = None,
+        status: str | None = None,
+        date_start: str | None = None,
+        date_end: str | None = None,
+    ) -> dict[str, Any]:
+        filters: dict[str, Any] = {}
+
+        if invoice_number:
+            filters["invoice_number"] = invoice_number
+
+        if status:
+            filters["status"] = status
+
+        if sender_name:
+            filters["sender_name"] = {"$regex": re.escape(sender_name), "$options": "i"}
+
+        if filename_query:
+            filters["filename"] = {"$regex": re.escape(filename_query), "$options": "i"}
+
+        # Date Filters
+        date_filter = {}
+        if date_start:
+            date_filter["$gte"] = self._parse_date_str(date_start, "date_start")
+        if date_end:
+            date_filter["$lte"] = self._parse_date_str(date_end, "date_end")
+
+        if date_filter:
+            filters["invoice_date"] = date_filter
+
+        return filters
+
+    def _build_line_item_projection(self, use_vector_score: bool) -> dict[str, Any]:
+        return {
+            "$project": {
+                "_id": 0,
+                "score": {"$meta": "vectorSearchScore"}
+                if use_vector_score
+                else {"$literal": 1.0},
+                "invoice_id": 1,
+                "page_number": 1,
+                "description": 1,
+                "quantity": 1,
+                "quantity_unit": 1,
+                "unit_price": 1,
+                "total_amount": 1,
+                "delivery_date": 1,
+                "section": 1,
+                "item_code": 1,
+                # Flatten joined fields
+                "invoice_number": {"$arrayElemAt": ["$invoice_info.invoice_number", 0]},
+                "sender_name": {"$arrayElemAt": ["$invoice_info.sender_name", 0]},
+                "invoice_date": {"$arrayElemAt": ["$invoice_info.invoice_date", 0]},
+            }
+        }
+
+    def _build_range_filter(
+        self, min_val: float | None, max_val: float | None
+    ) -> dict[str, float] | None:
+        if min_val is None and max_val is None:
+            return None
+        f = {}
+        if min_val is not None:
+            f["$gte"] = min_val
+        if max_val is not None:
+            f["$lte"] = max_val
+        return f
+
+    def _parse_date_str(self, date_str: str, field_name: str) -> date:
+        try:
+            return datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError as e:
+            raise InvalidDateFormatError(date_str, field_name) from e

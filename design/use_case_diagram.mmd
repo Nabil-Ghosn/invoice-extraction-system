@@ -1,0 +1,33 @@
+flowchart LR
+    %% Actor
+    User(User)
+
+    %% System Boundary
+    subgraph System [Invoice Extraction System]
+        direction TB
+        
+        %% Use Case Nodes
+        UC1[Ingest Invoice Document]
+        UC2[Extract Line Items]
+        UC3[Index Data]
+        
+        UC4[Ask Question]
+        UC5[Retrieve via Metadata]
+        UC6[Retrieve via Semantics]
+        UC7[Generate Grounded Answer]
+    end
+
+    %% Relationships
+    User -- "1. Uploads PDF" --> UC1
+    UC1 --> UC2
+    UC2 --> UC3
+
+    User -- "2. Types Query" --> UC4
+    UC4 -- "Filter (e.g. Page 3)" --> UC5
+    UC4 -- "Search (e.g. 'Cables')" --> UC6
+    
+    UC5 --> UC7
+    UC6 --> UC7
+
+    class User actor;
+    class UC1,UC2,UC3,UC4,UC5,UC6,UC7 usecase;

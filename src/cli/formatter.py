@@ -21,7 +21,7 @@ def format_line_items(items: list[LineItemProjection]) -> str:
         lines.append(
             "\n".join(
                 [
-                    f"Line Item #{idx}",
+                    f"Line Item #{idx}\tvector search score ({item.score})",
                     f"  Page        : {item.page_number}",
                     f"  Section     : {item.section}",
                     f"  Description : {item.description}",
@@ -30,6 +30,9 @@ def format_line_items(items: list[LineItemProjection]) -> str:
                     f"  Unit Price  : {unit_price}",
                     f"  Total       : {total}",
                     f"  Delivery    : {item.delivery_date or 'N/A'}",
+                    f"  invoice_number    : {item.invoice_number}",
+                    f"  sender_name    : {item.sender_name}",
+                    f"  invoice_date    : {item.invoice_date or 'N/A'}",
                 ]
             )
         )

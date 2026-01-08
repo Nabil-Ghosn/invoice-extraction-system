@@ -24,6 +24,35 @@ An enterprise-grade RAG (Retrieval-Augmented Generation) pipeline designed to tr
 * **Llama Cloud API Key** for document parsing (required for processing PDF invoices)
 * **MongoDB Atlas** account for vector search capabilities (or local MongoDB instance)
 
+### MongoDB Vector Index Configuration
+
+For vector search functionality, you need to create a vector index in MongoDB Atlas with the following configuration:
+
+```json
+{
+  "fields": [
+    {
+      "numDimensions": 768,
+      "path": "vector",
+      "similarity": "cosine",
+      "type": "vector"
+    },
+    {
+      "path": "page_number",
+      "type": "filter"
+    },
+    {
+      "path": "total_amount",
+      "type": "filter"
+    },
+    {
+      "path": "invoice_id",
+      "type": "filter"
+    }
+  ]
+}
+```
+
 ### Environment Setup
 
 1. Copy the environment template:
@@ -111,7 +140,7 @@ Examples:
 The system is built on a **Logical Command Query Responsibility Segregation (CQRS)** pattern within a modular monolith. This design separates the application into two main pipelines:
 
 * **Ingestion (Write Path):** A high-compute pipeline that parses PDFs, extracts data using a stateful "rolling context" LLM strategy, creates embeddings, and saves the structured data to MongoDB.
-* **Retrieval (Read Path):** A low-latency RAG pipeline that uses an LLM to translate natural language queries into hybrid searches (combining vector search with metadata filtering) and synthesizes grounded answers.
+* **Retrieval (Read Path):** A low-latency RAG pipeline that uses an LLM to route natural language queries to appropriate search tools, which are then executed by a repository layer that combines vector search with metadata filtering in a single MongoDB pipeline and synthesizes grounded answers.
 
 A **Shared Kernel** (`src/core`) provides common data models and services to both pipelines. For a detailed breakdown, please see [`design/architecture.md`](design/architecture.md).
 

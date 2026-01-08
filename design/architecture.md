@@ -38,7 +38,6 @@ src/
 └── retrieval/             # READ PATH (RAG & Search)
 │   ├── retrieval_service.py   # Facade for the retrieval pipeline
 │   ├── query_router.py        # LLM-based tool to analyze user query intent
-│   ├── query_translator.py    # Translates intent into a DB query
 │   ├── answer_generator.py    # LLM to synthesize final answers
 │   ├── query_invoice_repository.py # Data access layer for reading from DB
 │   └── tools.py               # Pydantic models for retrieval tools
@@ -63,9 +62,8 @@ The retrieval flow is orchestrated by the `RetrievalService`:
 1. **Route Query:** The user's natural language query is sent to the `QueryRouter`. This LLM-based component analyzes the query and identifies two key pieces of information:
     - **Structured Filters:** Specific criteria like dates, vendors, or page numbers.
     - **Semantic Intent:** The core meaning of the query (e.g., "all charges related to labor").
-2. **Translate Query:** The `QueryTranslator` receives the router's output. It embeds the semantic intent into a vector for similarity search and constructs a filter expression for the structured criteria. It then assembles a single, hybrid MongoDB aggregation query.
-3. **Fetch Data:** The `QueryInvoiceRepository` executes this aggregation against the database, which performs a hybrid search—first filtering by metadata and then running a vector search on the remaining documents.
-4. **Generate Answer:** The top-k retrieved line items and the original user query are passed to the `AnswerGenerator`. This final LLM call synthesizes a concise, human-readable answer that is explicitly grounded in the retrieved data. If the user requests raw data, this step is skipped.
+2. **Execute Query:** The `QueryInvoiceRepository` receives the router's output as structured tools (`SearchLineItemsTool` or `SearchInvoicesTool`). It embeds the semantic intent into a vector for similarity search when needed and constructs a MongoDB aggregation pipeline based on the structured criteria. The repository executes the hybrid search—combining metadata filtering with vector search in a single pipeline.
+3. **Generate Answer:** The top-k retrieved line items and the original user query are passed to the `AnswerGenerator`. This final LLM call synthesizes a concise, human-readable answer that is explicitly grounded in the retrieved data. If the user requests raw data, this step is skipped.
 
 ## 4. Key Algorithms & Strategies
 
