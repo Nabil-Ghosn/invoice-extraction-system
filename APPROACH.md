@@ -332,7 +332,7 @@ invoice-extraction-system/
 │   ├── retrieval/              # READ PATH (Low Latency)
 │   │   ├── router.py           # LLM Intent Classifier (Function Calling)
 │   │   ├── translator.py       # Query Builder (Tool -> Mongo Pipeline)
-│   │   ├── repository.py       # Database Execution Layer
+│   │   ├── query_repository.py # Database Execution Layer
 │   │   └── service.py          # RAG Orchestrator
 │   │
 │   └── main.py                 # CLI Entrypoint (Typer/Click)
@@ -376,10 +376,10 @@ Since we lack a massive labeled dataset, we evaluate using a **"Golden Set" Smal
 
 ### 3. Deliverable Checklist
 
-* [ ] **APPROACH.md:** Explains *why* MongoDB was chosen over SQL, and *why* LlamaParse was used over PyTesseract.
-* [ ] **Architecture Diagram:** The Mermaid flowchart in `design/architecture.md`.
-* [ ] **CLI:** `python main.py ingest --file invoice.pdf` and `python main.py ask "Total cost of labor?"`.
-* [*] **Docker:** `docker-compose up -d` spins up the DB.
+* [ x ] **APPROACH.md:** Explains *why* MongoDB was chosen over SQL, and *why* LlamaParse was used over PyTesseract.
+* [ x ] **Architecture Diagram:** The Mermaid flowchart in `design/architecture.md`.
+* [ x ] **CLI:** `python main.py ingest invoice.pdf` and `python main.py ask "Total cost of labor?"`.
+* [ ] **Docker:** `docker-compose up -d` spins up the DB. (Must be Atlas for vector search)
 
 **This concludes the architectural design phase.**
 You are now ready to generate the code.

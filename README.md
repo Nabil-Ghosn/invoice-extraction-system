@@ -1,6 +1,6 @@
 # Invoice Extraction System
 
-An enterprise-grade RAG (Retrieval-Augmented Generation) pipeline designed to transform unstructured invoice PDFs into structured, queryable data. Unlike traditional OCR tools, this system utilizes **Vision LLMs** and **Context-Aware Parsing** to handle complex, multi-page invoices (Level 2 complexity) with varying layouts. It enables users to perform both precise structural filtering and fuzzy semantic searches using natural language.
+An enterprise-grade RAG (Retrieval-Augmented Generation) pipeline designed to transform unstructured invoice PDFs into structured, queryable data. Unlike traditional OCR tools, this system utilizes **Vision LLMs** and **Context-Aware Parsing** to handle complex, multi-page invoices with varying layouts. It enables users to perform both precise structural filtering and fuzzy semantic searches using natural language.
 
 ## Key Features
 
@@ -10,6 +10,50 @@ An enterprise-grade RAG (Retrieval-Augmented Generation) pipeline designed to tr
 * **💬 Grounded Q&A:** Generates natural language answers strictly cited with sources `[Invoice: X, Page: Y]` to eliminate hallucinations.
 * **🧩 Atomic Chunking:** Stores line items as individual records enriched with parent metadata for maximum retrieval precision.
 * **🖥️ CLI Interface:** Simple command-line tools for ingestion, querying, and system evaluation.
+
+---
+
+## 🛠️ Technical Implementation
+
+> 🏗️ **Architecture:** See [`design/architecture.md`](design/architecture.md) for system diagrams.
+> 🧠 **Decisions:** See [`APPROACH.md`](APPROACH.md) for a deep dive into trade-offs.
+
+### 1. Extraction Strategy: Rolling Context
+
+We utilize a **Stateful Sequential Extraction** pipeline to handle multi-page invoices.
+
+* **The Problem:** Standard OCR fails on "headless tables" (tables that span page breaks without repeating headers).
+* **The Solution:** We maintain a `PageState` object across iterations. If Page 1 ends inside a table, Page 2 inherits those headers, ensuring data continuity.
+* **Engine:** Powered by **LlamaParse** (layout-aware parsing) and **Gemini 2.5 Flash** (structural extraction).
+
+### 2. Chunking Strategy: Atomic Line Items
+
+Instead of arbitrary token windows, we chunk data by **semantic boundaries**.
+
+* **Granularity:** Each extracted Line Item is treated as an atomic record.
+* **Enrichment:** Every item is enriched with parent metadata (Invoice ID, Page #, Vendor). This ensures that a vector search for "Labor costs" can still be accurately filtered by "Page 3".
+
+### 3. Storage & Retrieval: Hybrid Search
+
+We use **MongoDB Atlas** as a unified operational and vector database.
+
+* **Query Routing:** An LLM router first extracts hard filters (e.g., `date > 2023`) from the user's prompt.
+* **Execution:** These filters are applied strictly **before** vector search runs. This "Hybrid" approach prevents hallucinations where the LLM might otherwise ignore metadata constraints.
+
+### 4. AI Stack
+
+* **LLM (Gemini 2.5 Flash):** Chosen for its **1M token context window**, allowing the model to reason across entire documents at low cost.
+* **Embeddings (text-embedding-004):** Native integration optimized for retrieval tasks (768 dimensions).
+
+### 5. Evaluation Strategy (Planned)
+
+We have designed a validation framework based on a **"Golden Set"** methodology to ensure reliability:
+
+* **Extraction Accuracy:** JSON-to-JSON comparison against manually labeled ground truth.
+* **Retrieval Recall:** Automated tests to verify that specific line items appear in the top-$k$ results for semantic queries.
+* **Hallucination Check:** An "LLM-as-a-Judge" pipeline to verify the final answer is strictly grounded in the retrieved context.
+
+---
 
 ## Prerequisites
 
@@ -134,14 +178,3 @@ Examples:
     ```bash
     python main.py ask "What was the total amount for the invoice from 'Acme Corp' on 2023-01-15?" --llm-generated
     ```
-
-## Architecture Overview
-
-The system is built on a **Logical Command Query Responsibility Segregation (CQRS)** pattern within a modular monolith. This design separates the application into two main pipelines:
-
-* **Ingestion (Write Path):** A high-compute pipeline that parses PDFs, extracts data using a stateful "rolling context" LLM strategy, creates embeddings, and saves the structured data to MongoDB.
-* **Retrieval (Read Path):** A low-latency RAG pipeline that uses an LLM to route natural language queries to appropriate search tools, which are then executed by a repository layer that combines vector search with metadata filtering in a single MongoDB pipeline and synthesizes grounded answers.
-
-A **Shared Kernel** (`src/core`) provides common data models and services to both pipelines. For a detailed breakdown, please see [`design/architecture.md`](design/architecture.md).
-
-To look more for Design decisions & trade-offs that are taken step by step through this project, please see [`APPROACH.md`](APPROACH.md)

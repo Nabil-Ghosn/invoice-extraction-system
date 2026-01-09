@@ -1,93 +1,309 @@
 # Invoice Extraction System Architecture
 
-## 1. Overview
+## 1. System Overview
 
-This document outlines the architecture of the Invoice Extraction System, a modular application designed to parse, extract, and query complex, multi-page invoices. The system employs a **stateful extraction pipeline** to handle sophisticated layouts (e.g., headless tables, shifting schemas) and a **Retrieval-Augmented Generation (RAG)** pipeline for intelligent querying.
+The **Invoice Extraction System** is a domain-specialized RAG (Retrieval-Augmented Generation) application designed to process, structure, and query complex multi-page invoices.
 
-The core architectural pattern is a **Logical Command Query Responsibility Segregation (CQRS)** implemented within a **Modular Monolith**. This pattern strictly decouples the high-compute ingestion workload (the "Write Path") from the low-latency query workload (the "Read Path"), allowing each to be optimized independently while sharing a common domain model.
+It solves two specific problems:
 
-## 2. Architectural Pattern: Logical CQRS
+1. **Extraction:** Converting unstructured PDFs (including headless tables and shifting layouts) into strict, deterministic JSON.
+2. **Retrieval:** Enabling natural language querying ("Show me labor costs on Page 3") by combining semantic understanding with precise metadata filtering.
 
-- **Write Path (`ingestion` module):** This path is responsible for all heavy-lifting. It takes a raw PDF file and processes it through a multi-stage pipeline involving parsing, AI-driven data extraction, data enrichment, embedding, and finally, database persistence. It is optimized for accuracy and throughput, not low latency.
+The system utilizes **Logical CQRS** (Command Query Responsibility Segregation) within a Modular Monolith structure to decouple high-compute ingestion from low-latency retrieval.
 
-- **Read Path (`retrieval` module):** This path provides a user-facing query interface. It uses a series of AI and deterministic components to understand a user's query, translate it into a hybrid database query (combining metadata filters and vector search), retrieve relevant data, and synthesize a grounded answer. It is optimized for low-latency, interactive use.
+```mermaid
+flowchart LR
+    %% High Level Context
+    User([User])
+    
+    subgraph "Write Path (High Latency)"
+        Ingest[Ingestion Service]
+        Parser[LlamaParse]
+        LLM_Ext[Gemini Extraction]
+    end
+    
+    subgraph "Persistence"
+        DB[(MongoDB Atlas)]
+        Vec[Vector Store]
+    end
+    
+    subgraph "Read Path (Low Latency)"
+        Retrieve[Retrieval Service]
+        Router[Query Router]
+        LLM_Syn[Answer Generator]
+    end
 
-- **Shared Kernel (`core` module):** This central module acts as the connective tissue, providing shared components to both paths. It defines the persistent data models, manages configuration, and offers common utilities like the embedding service, ensuring consistency and preventing code duplication.
+    User -- "1. Upload PDF" --> Ingest
+    Ingest --> Parser
+    Parser --> LLM_Ext
+    LLM_Ext -- "Structured Data" --> DB
+    LLM_Ext -- "Embeddings" --> Vec
 
-## 3. System Components & Data Flow
-
-The system is organized into three primary Python packages: `src/core`, `src/ingestion`, and `src/retrieval`.
-
-```tree
-src/
-├── core/                  # SHARED KERNEL
-│   ├── env_settings.py    # Environment variable management
-│   ├── models.py          # Persistent data models for MongoDB (Beanie)
-│   ├── extensive_schemas.py  # Pydantic schemas for LLM extraction (multi-page)
-│   ├── extracted_schemas.py # Pydantic schemas for LLM extraction (single-page)
-│   ├── prompts.py         # Centralized LLM prompts
-│   └── services/
-│       └── embedder.py    # Shared embedding service client
-│
-├── ingestion/             # WRITE PATH (Heavy Lifting)
-│   ├── ingestion_service.py   # Orchestrator for the ingestion pipeline
-│   ├── invoice_parser.py      # LlamaParse wrapper for PDF -> Markdown
-│   ├── invoice_extractor.py   # Core LLM extraction logic (rolling context)
-│   └── command_invoice_repository.py # Data access layer for writing to DB
-│
-└── retrieval/             # READ PATH (RAG & Search)
-│   ├── retrieval_service.py   # Facade for the retrieval pipeline
-│   ├── query_router.py        # LLM-based tool to analyze user query intent
-│   ├── answer_generator.py    # LLM to synthesize final answers
-│   ├── query_invoice_repository.py # Data access layer for reading from DB
-│   └── tools.py               # Pydantic models for retrieval tools
+    User -- "2. Natural Language Query" --> Retrieve
+    Retrieve --> Router
+    Router --> DB
+    DB -- "Hybrid Results" --> LLM_Syn
+    LLM_Syn --> User
 ```
 
-### 3.1. Ingestion (Write Path)
+---
 
-The ingestion flow is orchestrated by the `IngestionService` and proceeds as follows:
+## 2. Module Architecture
 
-1. **Deduplication:** A hash of the input file is checked against the database to prevent re-processing.
-2. **Parse:** The `InvoiceParser` uses LlamaParse to convert the PDF into structured Markdown, preserving as much layout information as possible.
-3. **Extract:** The `InvoiceExtractor` takes the parsed pages and applies one of two strategies:
-    - **Single-Shot:** For single-page invoices, a simple, optimized LLM call extracts all data at once.
-    - **Sequential Chain:** For multi-page invoices, it iterates through each page, using the **Stateful Sequential Extraction** algorithm (see below) to maintain context.
-4. **Enrich & Embed:** The extracted line items are enriched with metadata (e.g., invoice ID, vendor). A descriptive `search_text` field is created for each line item and converted into a vector embedding by the `GeminiEmbedder`.
-5. **Save:** The `CommandInvoiceRepository` saves the final `InvoiceModel` and its associated `LineItemModel` documents (including their vectors) to the MongoDB database in a single transaction.
+The codebase is organized into three distinct packages to enforce separation of concerns.
 
-### 3.2. Retrieval (Read Path)
+```text
+src/
+├── core/                  # SHARED KERNEL (Stateless)
+│   ├── models.py          # Persistent DB Models (Beanie/MongoDB)
+│   ├── schemas.py         # Transient LLM Extraction Schemas
+│   ├── prompts.py         # LLM Prompts
+│   └── services/
+│       └── embedder.py    # Shared Vector Embedding Service
+│
+├── ingestion/             # WRITE PATH (Compute Heavy)
+│   ├── service.py         # Pipeline Manager (Orchestrator)
+│   ├── parser.py          # PDF -> Markdown Adapter
+│   ├── cmd_repository.py  # Command DB Access Layer
+│   └── extractor.py       # Stateful "Rolling Context" Logic
+│
+└── retrieval/             # READ PATH (Latency Sensitive)
+    ├── service.py         # RAG Facade
+    ├── router.py          # Intent Classification & Tool Selection
+    └── query_repository.py# Hybrid MongoDB Aggregation Builder
+```
 
-The retrieval flow is orchestrated by the `RetrievalService`:
+### 2.1 Shared Kernel (`core`)
 
-1. **Route Query:** The user's natural language query is sent to the `QueryRouter`. This LLM-based component analyzes the query and identifies two key pieces of information:
-    - **Structured Filters:** Specific criteria like dates, vendors, or page numbers.
-    - **Semantic Intent:** The core meaning of the query (e.g., "all charges related to labor").
-2. **Execute Query:** The `QueryInvoiceRepository` receives the router's output as structured tools (`SearchLineItemsTool` or `SearchInvoicesTool`). It embeds the semantic intent into a vector for similarity search when needed and constructs a MongoDB aggregation pipeline based on the structured criteria. The repository executes the hybrid search—combining metadata filtering with vector search in a single pipeline.
-3. **Generate Answer:** The top-k retrieved line items and the original user query are passed to the `AnswerGenerator`. This final LLM call synthesizes a concise, human-readable answer that is explicitly grounded in the retrieved data. If the user requests raw data, this step is skipped.
+Acts as the connective tissue for the application, strictly limited to stateless definitions and shared utilities.
 
-## 4. Key Algorithms & Strategies
+* **Data Models:** Persistent Beanie/MongoDB models (`Invoice` and `LineItem`) that define the database schema and relationships.
+* **LLM Schemas:** Pydantic definitions used for transient validation during the extraction process (handling both single-page and multi-page schemas).
+* **Configuration:** Centralized environment settings and API client management to prevent hardcoding.
+* **Embedding Service:** A shared wrapper around the embedding model (`GeminiEmbedder`) to ensure vector space consistency between the write (ingestion) and read (retrieval) paths.
 
-### 4.1. Stateful Sequential Extraction ("Rolling Context")
+### 2.2 The Write Path (`ingestion`)
 
-This is the core algorithm for handling complex, multi-page invoices. The `InvoiceExtractor` maintains a `PageState` object that is passed from one page to the next. This object tracks:
+Responsible for the high-compute workload of converting raw PDFs into structured data.
 
-- `table_status`: Whether a table is currently being parsed and is expected to continue on the next page.
-- `active_columns`: The headers of the current table, which are injected into the context for subsequent "headless" table rows on the next page.
-- `active_section_title`: The current section of the invoice to provide better contextual understanding.
+* **Ingestion Service:** The primary orchestrator that manages the pipeline flow (Deduplication -> Parsing -> Extraction -> Persistence).
+* **Invoice Parser:** A wrapper for **LlamaParse** that converts PDFs into layout-aware Markdown, preserving table topology.
+* **Invoice Extractor:** Encapsulates the core logic, dynamically applying a fast **Single-Shot** strategy for single-page files or the **Stateful Sequential** algorithm (maintaining "Rolling Context" across page breaks) for complex multi-page documents.
+* **Command Repository:** The data access layer responsible for performing atomic writes to MongoDB, ensuring invoices and line items are saved in a single transaction.
 
-This stateful approach allows the system to correctly associate line items with their headers and context, even when they are spread across page breaks.
+### 2.3 The Read Path (`retrieval`)
 
-### 4.2. Hybrid Search & Synthesis
+Responsible for low-latency query resolution and RAG operations.
 
-The retrieval path is designed to maximize both precision and relevance. By first using the `QueryRouter` to extract hard filters, it dramatically narrows the search space. The subsequent vector search then operates only on relevant documents, ensuring high-quality semantic matches. The final `AnswerGenerator` step ensures the user receives a helpful, conversational answer instead of just a raw data dump, improving the overall user experience.
+* **Retrieval Service:** The facade that serves user requests, acting as the entry point for the RAG pipeline.
+* **Query Router:** An LLM-based component that analyzes user intent to distinguish between specific metadata lookups and broad semantic searches, extracting structured filters via Function Calling.
+* **Query Repository:** Dynamically constructs and executes **Hybrid Search** aggregations. It combines strict metadata filtering (e.g., `page_number`) with semantic vector search in a single MongoDB pipeline.
+* **Answer Generator:** The final synthesis layer. It takes the top-$k$ retrieved chunks and the user's original query to generate a grounded, human-readable response.
 
-## 5. Technology Stack
+---
 
-- **Orchestration & AI:** LlamaIndex, LangChain
-- **LLMs:** Google Gemini 2.5 Flash / Pro (for extraction, routing, synthesis)
-- **Parsing:** LlamaParse
-- **Embeddings:** Google Gemini (`text-embedding-004`)
-- **Data Schemas:** Pydantic (for both transient validation and data modeling)
-- **Database:** MongoDB Atlas (for document storage and vector search)
-- **Dependency Injection:** `wireup`
-- **CLI:** Typer
+## 3. The Write Path: Ingestion Pipeline
+
+The ingestion process converts raw PDFs into queryable vectors. It prioritizes **accuracy over latency**.
+
+### 3.1 Workflow
+
+1. **Deduplication:** File hash check against MongoDB to prevent redundant processing.
+2. **Layout Parsing:** **LlamaParse** converts PDF to Markdown, preserving table topology.
+3. **Stateful Extraction:** **Gemini 2.5 Flash** extracts data page-by-page. It maintains a `PageState` (active table headers, current section) to correctly parse "headless" tables on subsequent pages.
+4. **Embedding:** A descriptive `search_text` string is generated for each line item and vectorized.
+5. **Transactional Save:** Data is persisted to MongoDB.
+
+### 3.2 Sequence Diagram: Rolling Context Extraction
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client
+    participant Svc as IngestionService
+    participant LLM as Gemini Flash
+    participant DB as MongoDB
+
+    Client->>Svc: ingest(pdf)
+    Svc->>Svc: Calculate Hash & Check DB
+    
+    loop For Each Page in PDF
+        Svc->>Svc: Prepare Context (Previous Page State)
+        Svc->>LLM: Extract(Markdown + PrevState)
+        LLM-->>Svc: {LineItems, NewState, Metadata}
+        Svc->>Svc: Update State
+        Svc->>Svc: Accumulate Items
+    end
+    
+    Svc->>Svc: Flatten & Enrich Line Items
+    Svc->>LLM: Generate Embeddings (Batch)
+    LLM-->>Svc: Vectors
+    
+    Svc->>DB: Save Invoice & LineItems (Atomic)
+    Svc-->>Client: Success
+```
+
+---
+
+## 4. The Read Path: Retrieval & RAG
+
+The retrieval process translates vague user intent into precise database queries. It prioritizes **precision and grounding**.
+
+### 4.1 Workflow
+
+1. **Query Routing:** An LLM analyzes the user prompt to determine intent and extracts structured parameters via Function Calling.
+    * *Intent:* "Search Items" vs "Get Invoice Metadata".
+    * *Filters:* `page_number`, `date`, `total_amount`.
+2. **Hybrid Scope Search:** The repository executes a MongoDB aggregation that:
+    * **Pre-filters** using strict canonical fields (e.g., `page_number`).
+    * **Vector Searches** within that filtered subset using semantic fields (e.g., `description`).
+3. **Synthesis:** The top-$k$ results are fed to the **Answer Generator** (LLM) to craft a human-readable response with citations.
+
+### 4.2 Retrieval Logic Flow
+
+```mermaid
+flowchart TD
+    %% --- External ---
+    Client([Client / User])
+    DB[("MongoDB")]
+
+    %% --- CLI Layer ---
+    subgraph Dispatcher ["CLI Dispatcher"]
+        RouteNode[Select Retrieval Route]
+    end
+
+    %% --- Main Service Boundary ---
+    subgraph Service ["Retrieval Service (Orchestrator)"]
+        direction TB
+
+        %% 1. Intent Analysis Component
+        subgraph QRouter ["Query Router (Intent & Filters)"]
+            direction TB
+            Analyze[Analyze User Query]
+            SelectTool{Select Tool}
+            
+            ToolLine[Tool: SearchLineItems]
+            ToolInv[Tool: SearchInvoices]
+            
+            Analyze --> SelectTool
+            SelectTool --> |"Ask: Line Items"| ToolLine
+            SelectTool --> |"Ask: Invoices"| ToolInv
+        end
+
+        %% 2. Data Access Component
+        subgraph QRepo ["Query Repository (Data Access)"]
+            direction TB
+            BuildPipe[Build Aggregation Pipeline]
+            ExecQuery[Execute Query]
+        end
+
+        %% 3. Logic Gate (Service Level)
+        CheckFlag{Flag: Generate<br/>Answer?}
+
+        %% 4. Generation Component
+        subgraph AnsGen ["Answer Generator (LLM)"]
+            Synthesize[Synthesize Grounded Answer]
+        end
+    end
+
+    %% --- Presentation Layer ---
+    subgraph Formatter ["CLI Formatter"]
+        FormatJSON[Format Response JSON/UI]
+    end
+
+    %% --- Connections ---
+    Client --> RouteNode
+    RouteNode --> Analyze
+
+    %% Connecting Router to Repo
+    ToolLine & ToolInv --> |"Filters & Intent"| BuildPipe
+    
+    %% Connecting Repo to DB
+    BuildPipe --> ExecQuery
+    ExecQuery <--> DB
+    
+    %% Connecting Repo Results to Logic Gate
+    ExecQuery --> |"Top-k Results"| CheckFlag
+
+    %% Branching Logic
+    CheckFlag -- "Yes (LLM)" --> Synthesize
+    Synthesize --> |"Generated Text"| FormatJSON
+    
+    CheckFlag --> |"Structured Data"| FormatJSON
+
+    FormatJSON --> |"Final Output"| Client
+```
+
+---
+
+## 5. Data Architecture
+
+The system uses a **Flattened Document Model** in MongoDB to optimize for vector search granularity and bypass sparse data issues for 50+-page invoices.
+
+### 5.1 Entity Relationships
+
+```mermaid
+erDiagram
+    INVOICE {
+        string id PK "Primary Key"
+        string invoice_number "Business identifier"
+        date invoice_date
+        string sender_name
+        float total_amount
+        string status "e.g., COMPLETED, FAILED"
+    }
+
+    LINE_ITEM {
+        string id PK "Primary Key"
+        string invoice_id FK "Links to INVOICE"
+        string description "Item or service details"
+        float quantity
+        float unit_price
+        float total_amount
+        string section "Category like 'Labor', 'Materials'"
+    }
+
+    INVOICE ||--o{ LINE_ITEM : "contains"
+```
+
+### 5.2 Storage Strategy
+
+* **Collection `invoices`:** Stores global document metadata. Used for "Get Metadata" tools.
+* **Collection `line_items`:** Stores atomic rows. This is the primary target for Vector Search.
+  * **Context Injection:** We do *not* rely on the vector of the word "Labor" alone. We embed:
+        > `Context: {Vendor} - {Section} | Item: {Description}`
+  * This ensures "Apple" (Fruit) and "Apple" (Tech) are semantically distinct.
+
+---
+
+## 6. Key Algorithms
+
+### 6.1 Stateful Sequential Extraction
+
+* **Problem:** Tables often span multiple pages. Page 2 has numbers but no headers ("Headless Table").
+* **Solution:** The extraction loop passes a `PageState` object to the next iteration.
+  * If Page 1 ends inside a table, `table_status=OPEN` and `headers=[...]` are passed to Page 2.
+  * The LLM uses this injected context to map Page 2's raw values to the correct columns.
+
+### 6.2 Hybrid Scope Search
+
+* **Problem:** Vector search is fuzzy; Metadata search is strict. Users mix them ("Cables on Page 3").
+* **Solution:** We classify fields into **Canonical** (Strict) and **Semantic** (Fuzzy).
+  * `page_number` is a hard filter (Filter Stage).
+  * `description` is a vector target (Search Stage).
+  * The database executes `Filter` **before** `Vector Search` to ensure zero hallucinations regarding page numbers.
+
+---
+
+## 7. Technology Stack
+
+| Component | Technology | Rationale |
+| :--- | :--- | :--- |
+| **Parsing** | [LlamaParse](https://www.llamaindex.ai/llamaparse) | Only solution reliably outputting layout-aware Markdown for tables. |
+| **LLM** | Gemini 2.5 Flash | 1M token context window allows full-document awareness; low cost. |
+| **Embeddings** | Gemini (`text-embedding-004`) | Optimized for retrieval tasks; 768 dimensions. |
+| **Database** | MongoDB Atlas | Single platform for operational data (ACID) and Vector Search. |
+| **ODM** | [Beanie](https://beanie-odm.dev/) | Async Python ODM; allows seamless Pydantic-to-MongoDB persistence. |
+| **DI** | [wireup](https://maldoinc.github.io/wireup) | Performant, concise and type-safe Dependency Injection. |
+| **Orchestrator** | [LlamaIndex](https://www.llamaindex.ai/) | Native support for structured extraction and node management. |
+| **CLI** | Typer | Type-safe CLI generation. |
